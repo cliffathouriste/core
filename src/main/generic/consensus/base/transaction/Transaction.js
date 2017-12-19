@@ -31,18 +31,18 @@ class Transaction {
      * @param {Account.Type} recipientType
      * @param {number} value
      * @param {number} fee
-     * @param {number} nonce
+     * @param {number} validityStartHeight
      * @param {Uint8Array} data
      * @param {Uint8Array} proof
      */
-    constructor(type, sender, senderType, recipient, recipientType, value, fee, nonce, data, proof) {
+    constructor(type, sender, senderType, recipient, recipientType, value, fee, validityStartHeight, data, proof) {
         if (!(sender instanceof Address)) throw new Error('Malformed sender');
         if (!NumberUtils.isUint8(senderType)) throw new Error('Malformed sender type');
         if (!(recipient instanceof Address)) throw new Error('Malformed recipient');
         if (!NumberUtils.isUint8(recipientType)) throw new Error('Malformed recipient type');
         if (!NumberUtils.isUint64(value) || value === 0) throw new Error('Malformed value');
         if (!NumberUtils.isUint64(fee)) throw new Error('Malformed fee');
-        if (!NumberUtils.isUint32(nonce)) throw new Error('Malformed nonce');
+        if (!NumberUtils.isUint32(validityStartHeight)) throw new Error('Malformed validityStartHeight');
         if (!(data instanceof Uint8Array) || !(NumberUtils.isUint16(data.byteLength))) throw new Error('Malformed data');
         if (proof && (!(proof instanceof Uint8Array) || !(NumberUtils.isUint16(proof.byteLength)))) throw new Error('Malformed proof');
 
@@ -61,7 +61,7 @@ class Transaction {
         /** @type {number} */
         this._fee = fee;
         /** @type {number} */
-        this._nonce = nonce;
+        this._validityStartHeight = validityStartHeight;
         /** @type {Uint8Array} */
         this._data = data;
         /** @type {Uint8Array} */
@@ -94,7 +94,7 @@ class Transaction {
         buf.writeUint8(this._recipientType);
         buf.writeUint64(this._value);
         buf.writeUint64(this._fee);
-        buf.writeUint32(this._nonce);
+        buf.writeUint32(this._validityStartHeight);
         return buf;
     }
 
@@ -108,7 +108,7 @@ class Transaction {
             + /*recipientType*/ 1
             + /*value*/ 8
             + /*fee*/ 8
-            + /*nonce*/ 4;
+            + this._validityStartHeight.serializedSize;
     }
 
     /**
@@ -158,6 +158,31 @@ class Transaction {
     }
 
     /**
+     * @return {Hash}
+     */
+    hashSync() {
+        // Exclude the signature, we don't want transactions to be malleable.
+        this._hash = this._hash || Hash.lightSync(this.serializeContent());
+        return this._hash;
+    }
+
+    /**
+     * @param {Transaction} o
+     * @return {number}
+     */
+    compare(o) {
+        if (this.fee/this.serializedSize > o.fee/o.serializedSize) return -1;
+        if (this.fee/this.serializedSize < o.fee/o.serializedSize) return 1;
+        if (this.serializedSize > o.serializedSize) return -1;
+        if (this.serializedSize < o.serializedSize) return 1;
+        if (this.fee > o.fee) return -1;
+        if (this.fee < o.fee) return 1;
+        if (this.value > o.value) return -1;
+        if (this.value < o.value) return 1;
+        return 0;
+    }
+
+    /**
      * @param {Transaction} o
      * @return {boolean}
      */
@@ -170,35 +195,9 @@ class Transaction {
             && this._recipientType === o._recipientType
             && this._value === o._value
             && this._fee === o._fee
-            && this._nonce === o._nonce
+            && this._validityStartHeight.equals(o._validityStartHeight)
             && BufferUtils.equals(this._data, o._data)
             && BufferUtils.equals(this._proof, o._proof);
-    }
-
-    /**
-     * @param {Transaction} o
-     */
-    compareBlockOrder(o) {
-        const recCompare = this._recipient.compare(o._recipient);
-        if (recCompare !== 0) return recCompare;
-        if (this._nonce < o._nonce) return -1;
-        if (this._nonce > o._nonce) return 1;
-        if (this._fee > o._fee) return -1;
-        if (this._fee < o._fee) return 1;
-        if (this._value > o._value) return -1;
-        if (this._value < o._value) return 1;
-        return this._sender.compare(o._sender);
-    }
-
-    /**
-     * @param {Transaction} o
-     */
-    compareAccountOrder(o) {
-        const senderCompare = this._sender.compare(o._sender);
-        if (senderCompare !== 0) return senderCompare;
-        if (this._nonce < o._nonce) return -1;
-        if (this._nonce > o._nonce) return 1;
-        return Assert.that(false, 'Invalid transaction set');
     }
 
     /**
@@ -210,7 +209,7 @@ class Transaction {
             + `recipient=${this._recipient.toBase64()}, `
             + `value=${this._value}, `
             + `fee=${this._fee}, `
-            + `nonce=${this._nonce}`
+            + `validityStartHeight=${this._validityStartHeight}`
             + `}`;
     }
 
@@ -249,8 +248,8 @@ class Transaction {
     }
 
     /** @type {number} */
-    get nonce() {
-        return this._nonce;
+    get validityStartHeight() {
+        return this._validityStartHeight;
     }
 
     /** @type {Uint8Array} */
@@ -275,9 +274,8 @@ class Transaction {
  * @enum
  */
 Transaction.Type = {
-    LEGACY: 0,
-    BASIC: 1,
-    EXTENDED: 2
+    BASIC: 0,
+    EXTENDED: 1
 };
 /** @type {Map.<Transaction.Type, {unserialize: function(buf: SerialBuffer):Transaction}>} */
 Transaction.TYPE_MAP = new Map();
